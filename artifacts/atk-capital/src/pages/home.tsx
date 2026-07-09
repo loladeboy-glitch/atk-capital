@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TrendingUp, TrendingDown, ArrowRight, Activity, Clock, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
@@ -6,16 +6,46 @@ const INITIAL_BALANCE = 10250.0;
 const INITIAL_PNL = 1130.5;
 const TRADE_GAIN = 50.0;
 
+const BTC_MIN = 67000;
+const BTC_MAX = 69000;
+const BTC_OPEN_24H = 67850;
+
 function formatUsd(value: number) {
   const [whole, cents] = Math.abs(value).toFixed(2).split('.');
   const wholeFormatted = Number(whole).toLocaleString('en-US');
   return { whole: wholeFormatted, cents };
 }
 
+function useBtcTicker() {
+  const [price, setPrice] = useState(
+    () => BTC_MIN + Math.random() * (BTC_MAX - BTC_MIN),
+  );
+  const priceRef = useRef(price);
+  priceRef.current = price;
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPrice((prev) => {
+        const move = (Math.random() - 0.5) * 400;
+        const next = prev + move;
+        return Math.min(BTC_MAX, Math.max(BTC_MIN, next));
+      });
+    }, 3000);
+    return () => clearInterval(id);
+  }, []);
+
+  const change = price - BTC_OPEN_24H;
+  const changePct = (change / BTC_OPEN_24H) * 100;
+
+  return { price, change, changePct };
+}
+
 export default function Home() {
   const [tradeStatus, setTradeStatus] = useState<'pending' | 'settling' | 'accepted' | 'declined'>('pending');
   const [balance, setBalance] = useState(INITIAL_BALANCE);
   const [pnl, setPnl] = useState(INITIAL_PNL);
+  const { price: btcPrice, change: btcChange, changePct: btcChangePct } = useBtcTicker();
+  const btcUp = btcChange >= 0;
 
   const handleTrade = () => {
     if (tradeStatus !== 'pending') return;
@@ -52,21 +82,44 @@ export default function Home() {
   return (
     <div className="min-h-[100dvh] bg-[#0B1F3A] text-slate-50 font-sans flex flex-col selection:bg-[#FFD700]/30 selection:text-[#FFD700]">
       {/* Header */}
-      <header className="px-6 py-5 border-b border-white/10 flex items-center justify-between sticky top-0 bg-[#0B1F3A]/80 backdrop-blur-md z-10">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-[#FFD700] flex items-center justify-center shadow-[0_0_15px_rgba(255,215,0,0.2)]">
-            <span className="text-[#0B1F3A] font-bold font-mono text-sm tracking-tighter">ATK</span>
+      <header className="border-b border-white/10 sticky top-0 bg-[#0B1F3A]/80 backdrop-blur-md z-10">
+        <div className="px-6 py-5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded bg-[#FFD700] flex items-center justify-center shadow-[0_0_15px_rgba(255,215,0,0.2)]">
+              <span className="text-[#0B1F3A] font-bold font-mono text-sm tracking-tighter">ATK</span>
+            </div>
+            <span className="font-semibold tracking-wide text-lg text-white">ATK Capital</span>
           </div>
-          <span className="font-semibold tracking-wide text-lg text-white">ATK Capital</span>
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+              SYS.ONLINE
+            </div>
+            <div className="w-9 h-9 rounded-full bg-[#FFD700]/10 border border-[#FFD700]/30 flex items-center justify-center overflow-hidden">
+              <span className="text-[#FFD700] font-mono text-sm font-bold">JW</span>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-            SYS.ONLINE
-          </div>
-          <div className="w-9 h-9 rounded-full bg-[#FFD700]/10 border border-[#FFD700]/30 flex items-center justify-center overflow-hidden">
-            <span className="text-[#FFD700] font-mono text-sm font-bold">JW</span>
-          </div>
+
+        {/* BTC/USDT Live Ticker */}
+        <div className="px-6 pb-3 flex items-center gap-3 text-xs sm:text-sm font-mono">
+          <span className="flex items-center gap-1.5 text-slate-400 uppercase tracking-wider text-[10px] sm:text-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#FFD700] animate-pulse"></span>
+            BTC/USDT
+          </span>
+          <span className="text-white font-semibold" data-testid="text-btc-price">
+            ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+          <span
+            className={`flex items-center gap-1 font-medium ${btcUp ? 'text-emerald-400' : 'text-red-400'}`}
+            data-testid="text-btc-change"
+          >
+            {btcUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+            {btcUp ? '+' : ''}
+            {btcChange.toFixed(2)} ({btcUp ? '+' : ''}
+            {btcChangePct.toFixed(2)}%)
+          </span>
+          <span className="hidden sm:inline text-slate-500 text-[10px] uppercase tracking-wider">24h</span>
         </div>
       </header>
 
