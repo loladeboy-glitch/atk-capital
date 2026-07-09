@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { TrendingUp, TrendingDown, ArrowRight, Activity, Clock, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, ShieldCheck, Wallet, Bitcoin } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 const INITIAL_BALANCE = 10250.0;
 const INITIAL_PNL = 1130.5;
-const TRADE_GAIN = 50.0;
 
 const BTC_MIN = 67000;
 const BTC_MAX = 69000;
@@ -41,42 +40,71 @@ function useBtcTicker() {
 }
 
 export default function Home() {
-  const [tradeStatus, setTradeStatus] = useState<'pending' | 'settling' | 'accepted' | 'declined'>('pending');
   const [balance, setBalance] = useState(INITIAL_BALANCE);
   const [pnl, setPnl] = useState(INITIAL_PNL);
+  const [btcHoldings, setBtcHoldings] = useState(0);
+  const [amountInput, setAmountInput] = useState('');
   const { price: btcPrice, change: btcChange, changePct: btcChangePct } = useBtcTicker();
   const btcUp = btcChange >= 0;
 
-  const handleTrade = () => {
-    if (tradeStatus !== 'pending') return;
-    setTradeStatus('settling');
-    const t = toast({
-      title: 'Placing Order...',
-      description: 'Routing SpaceX Series G Secondary to execution desk.',
-      className: 'bg-[#0B1F3A] border border-[#FFD700]/30 text-white',
-    });
-    setTimeout(() => {
-      setTradeStatus('accepted');
-      setBalance((prev) => prev + TRADE_GAIN);
-      setPnl((prev) => prev + TRADE_GAIN);
-      t.update({
-        id: t.id,
-        open: true,
-        title: 'Order Filled: +$50.00',
-        description: 'Trade executed and settled.',
-        className: 'bg-[#0B1F3A] border border-emerald-500/40 text-white',
+  const parsedAmount = Number(amountInput);
+  const isValidAmount = amountInput.trim() !== '' && Number.isFinite(parsedAmount) && parsedAmount > 0;
+
+  const handleBuy = () => {
+    if (!isValidAmount) {
+      toast({
+        title: 'Enter a valid USDT amount',
+        className: 'bg-[#0B1F3A] border border-red-500/40 text-white',
       });
-    }, 1200);
+      return;
+    }
+    if (parsedAmount > balance) {
+      toast({
+        title: 'Insufficient USDT balance',
+        description: `Available: ${formatUsd(balance).whole}.${formatUsd(balance).cents}`,
+        className: 'bg-[#0B1F3A] border border-red-500/40 text-white',
+      });
+      return;
+    }
+    const btcBought = parsedAmount / btcPrice;
+    setBalance((prev) => prev - parsedAmount);
+    setBtcHoldings((prev) => prev + btcBought);
+    toast({
+      title: 'Buy Order Filled',
+      description: `Bought ${btcBought.toFixed(6)} BTC for ${parsedAmount.toFixed(2)}.`,
+      className: 'bg-[#0B1F3A] border border-emerald-500/40 text-white',
+    });
+    setAmountInput('');
   };
 
-  const handleDecline = () => {
-    if (tradeStatus !== 'pending') return;
-    setTradeStatus('declined');
-    toast({
-      title: 'Trade Declined',
-      description: 'The proposed order was rejected.',
-      className: 'bg-[#0B1F3A] border border-[#FFD700]/30 text-white',
+  const handleSell = () => {
+    if (!isValidAmount) {
+      toast({
+        title: 'Enter a valid USDT amount',
+        className: 'bg-[#0B1F3A] border border-red-500/40 text-white',
+      });
+      return;
+    }
+    const btcNeeded = parsedAmount / btcPrice;
+    if (btcNeeded > btcHoldings) {
+      toast({
+        title: 'Insufficient BTC holdings',
+        description: `Available: ${btcHoldings.toFixed(6)} BTC`,
+        className: 'bg-[#0B1F3A] border border-red-500/40 text-white',
+      });
+      return;
+    }
+    setBalance((prev) => prev + parsedAmount);
+    setBtcHoldings((prev) => {
+      const next = prev - btcNeeded;
+      return Math.abs(next) < 1e-9 ? 0 : next;
     });
+    toast({
+      title: 'Sell Order Filled',
+      description: `Sold ${btcNeeded.toFixed(6)} BTC for ${parsedAmount.toFixed(2)}.`,
+      className: 'bg-[#0B1F3A] border border-emerald-500/40 text-white',
+    });
+    setAmountInput('');
   };
 
   return (
@@ -155,76 +183,91 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Action Required / Proposed Trade */}
+        {/* Holdings */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-slate-900/40 backdrop-blur-sm rounded-2xl p-5 border border-white/5 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-[#FFD700]/10 border border-[#FFD700]/30 flex items-center justify-center shrink-0">
+              <Bitcoin className="w-5 h-5 text-[#FFD700]" />
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Holdings: BTC</div>
+              <div className="text-lg font-mono text-white" data-testid="text-btc-holdings">
+                {btcHoldings.toFixed(6)} BTC
+              </div>
+            </div>
+          </div>
+          <div className="bg-slate-900/40 backdrop-blur-sm rounded-2xl p-5 border border-white/5 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0">
+              <Wallet className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Holdings: USDT</div>
+              <div className="text-lg font-mono text-white" data-testid="text-usdt-holdings">
+                ${formatUsd(balance).whole}.{formatUsd(balance).cents}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Buy / Sell BTC */}
         <section className="mt-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold tracking-wide flex items-center gap-2 text-white">
-              <Clock className="w-5 h-5 text-[#FFD700]" />
-              Pending Settlement
+              <Bitcoin className="w-5 h-5 text-[#FFD700]" />
+              Trade BTC/USDT
             </h2>
           </div>
-          
+
           <div className="bg-slate-900/60 border border-[#FFD700]/20 rounded-2xl p-1 shadow-[0_0_20px_rgba(255,215,0,0.05)] relative overflow-hidden transition-all duration-300 hover:shadow-[0_0_30px_rgba(255,215,0,0.1)]">
             {/* Background glow */}
             <div className="absolute top-0 right-0 w-64 h-64 bg-[#FFD700]/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
 
-            <div className="bg-slate-900/80 rounded-xl p-5 sm:p-6 relative z-10 backdrop-blur-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest bg-[#FFD700]/10 text-[#FFD700] border border-[#FFD700]/20">Private Block</span>
-                    <span className="text-xs font-mono text-slate-400">ID: TRD-8829-X</span>
-                  </div>
-                  <h3 className="text-xl font-semibold mb-2 text-white">SpaceX Series G Secondary</h3>
-                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400 font-mono">
-                    <div className="flex items-center gap-1.5">
-                      <span className="uppercase text-[10px] tracking-wider opacity-70">Volume</span>
-                      <span className="text-white">150 Shares</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="uppercase text-[10px] tracking-wider opacity-70">Price</span>
-                      <span className="text-white">$82.00 / sh</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="uppercase text-[10px] tracking-wider opacity-70">Notional</span>
-                      <span className="text-white">$12,300.00</span>
-                    </div>
-                  </div>
-                </div>
+            <div className="bg-slate-900/80 rounded-xl p-5 sm:p-6 relative z-10 backdrop-blur-sm flex flex-col gap-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm font-mono text-slate-400">
+                <span>Market Price</span>
+                <span className="text-white font-semibold">
+                  ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
 
-                {tradeStatus === 'pending' ? (
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-                    <button 
-                      onClick={handleDecline}
-                      className="px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 border border-slate-700 hover:border-slate-500 hover:bg-slate-800 text-slate-300 hover:text-white"
-                      data-testid="button-decline"
-                    >
-                      Decline
-                    </button>
-                    <button 
-                      onClick={handleTrade}
-                      className="px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 bg-[#FFD700] text-[#0B1F3A] hover:bg-[#FFE55C] hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] shadow-[0_0_10px_rgba(255,215,0,0.2)] flex items-center justify-center gap-2"
-                      data-testid="button-trade"
-                    >
-                      Trade <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : tradeStatus === 'settling' ? (
-                  <div className="flex items-center justify-center sm:justify-start gap-2 text-[#FFD700] font-medium px-6 py-3 bg-[#FFD700]/10 rounded-lg border border-[#FFD700]/20 w-full sm:w-auto">
-                    <Clock className="w-5 h-5 animate-pulse" />
-                    Placing Order...
-                  </div>
-                ) : tradeStatus === 'accepted' ? (
-                  <div className="flex items-center justify-center sm:justify-start gap-2 text-emerald-400 font-medium px-6 py-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20 w-full sm:w-auto">
-                    <CheckCircle2 className="w-5 h-5" />
-                    Trade Executed
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center sm:justify-start gap-2 text-slate-400 font-medium px-6 py-3 bg-white/5 rounded-lg border border-white/10 w-full sm:w-auto">
-                    <XCircle className="w-5 h-5" />
-                    Trade Declined
-                  </div>
-                )}
+              <div>
+                <label htmlFor="usdt-amount" className="block text-xs uppercase tracking-wider text-slate-400 mb-2">
+                  USDT Amount
+                </label>
+                <div className="relative">
+                  <input
+                    id="usdt-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={amountInput}
+                    onChange={(e) => setAmountInput(e.target.value)}
+                    data-testid="input-usdt-amount"
+                    className="w-full bg-black/30 border border-white/10 focus:border-[#FFD700]/60 focus:outline-none focus:ring-2 focus:ring-[#FFD700]/20 rounded-lg px-4 py-3 font-mono text-lg text-white placeholder:text-slate-600 transition-all"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-500 uppercase tracking-wider">
+                    USDT
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch gap-3">
+                <button
+                  onClick={handleSell}
+                  className="flex-1 px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/60"
+                  data-testid="button-sell"
+                >
+                  SELL BTC
+                </button>
+                <button
+                  onClick={handleBuy}
+                  className="flex-1 px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 bg-[#FFD700] text-[#0B1F3A] hover:bg-[#FFE55C] hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] shadow-[0_0_10px_rgba(255,215,0,0.2)]"
+                  data-testid="button-buy"
+                >
+                  BUY BTC
+                </button>
               </div>
             </div>
           </div>
