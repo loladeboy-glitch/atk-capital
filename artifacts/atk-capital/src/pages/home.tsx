@@ -1,15 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { ResponsiveContainer, ComposedChart, Bar, XAxis, YAxis } from 'recharts';
-import { TrendingUp, TrendingDown, Activity, ShieldCheck, Wallet, Bitcoin, BarChart3 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, ShieldCheck, Wallet, Bitcoin, BarChart3, FlaskConical } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 const INITIAL_BALANCE = 10250.0;
 const INITIAL_PNL = 1130.5;
 
-const BTC_MIN = 67000;
-const BTC_MAX = 69000;
-const BTC_OPEN_24H = 67850;
-const MAX_CANDLES = 24;
+const POLL_MS = 5000;
+
+// Live BTC/USDT market data is proxied server-side through our own API
+// (artifacts/api-server) to Binance Testnet's public endpoints, avoiding
+// browser CORS restrictions. No API key is used and no order-placement
+// endpoints are called — only public ticker/kline reads — so no real
+// trading or real funds are ever involved.
+const API_BASE = `${import.meta.env.BASE_URL}api`;
 
 interface Candle {
   time: number;
@@ -26,56 +30,57 @@ function formatUsd(value: number) {
   return { whole: wholeFormatted, cents };
 }
 
-function makeCandle(time: number, open: number, close: number): Candle {
-  const wiggle = Math.random() * 60;
-  const high = Math.max(open, close) + wiggle;
-  const low = Math.min(open, close) - wiggle;
-  const clampedHigh = Math.min(BTC_MAX + 150, high);
-  const clampedLow = Math.max(BTC_MIN - 150, low);
-  return {
-    time,
-    open,
-    close,
-    high: clampedHigh,
-    low: clampedLow,
-    range: [clampedLow, clampedHigh],
-  };
+function candleFromKline(k: any[]): Candle {
+  const time = k[0];
+  const open = Number(k[1]);
+  const high = Number(k[2]);
+  const low = Number(k[3]);
+  const close = Number(k[4]);
+  return { time, open, high, low, close, range: [low, high] };
 }
 
+type ConnectionStatus = 'connecting' | 'live' | 'error';
+
 function useBtcTicker() {
-  const [price, setPrice] = useState(
-    () => BTC_MIN + Math.random() * (BTC_MAX - BTC_MIN),
-  );
-  const [candles, setCandles] = useState<Candle[]>(() => {
-    let last = price;
-    const seed: Candle[] = [];
-    for (let i = -MAX_CANDLES + 1; i <= 0; i++) {
-      const next = Math.min(BTC_MAX, Math.max(BTC_MIN, last + (Math.random() - 0.5) * 300));
-      seed.push(makeCandle(i, last, next));
-      last = next;
-    }
-    return seed;
-  });
+  const [price, setPrice] = useState<number | null>(null);
+  const [change, setChange] = useState(0);
+  const [changePct, setChangePct] = useState(0);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
+
   useEffect(() => {
-    const id = setInterval(() => {
-      setPrice((prev) => {
-        const move = (Math.random() - 0.5) * 400;
-        const next = Math.min(BTC_MAX, Math.max(BTC_MIN, prev + move));
-        setCandles((prevCandles) => {
-          const lastTime = prevCandles[prevCandles.length - 1]?.time ?? 0;
-          const updated = [...prevCandles, makeCandle(lastTime + 1, prev, next)];
-          return updated.length > MAX_CANDLES ? updated.slice(updated.length - MAX_CANDLES) : updated;
-        });
-        return next;
-      });
-    }, 3000);
-    return () => clearInterval(id);
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const [tickerRes, klinesRes] = await Promise.all([
+          fetch(`${API_BASE}/binance-testnet/ticker`),
+          fetch(`${API_BASE}/binance-testnet/klines`),
+        ]);
+        if (!tickerRes.ok || !klinesRes.ok) throw new Error('Testnet request failed');
+        const ticker = await tickerRes.json();
+        const klines = await klinesRes.json();
+        if (cancelled) return;
+
+        setPrice(Number(ticker.lastPrice));
+        setChange(Number(ticker.priceChange));
+        setChangePct(Number(ticker.priceChangePercent));
+        setCandles(klines.map(candleFromKline));
+        setStatus('live');
+      } catch (err) {
+        if (!cancelled) setStatus('error');
+      }
+    }
+
+    poll();
+    const id = setInterval(poll, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
 
-  const change = price - BTC_OPEN_24H;
-  const changePct = (change / BTC_OPEN_24H) * 100;
-
-  return { price, change, changePct, candles };
+  return { price, change, changePct, candles, status };
 }
 
 function CandleShape(props: any) {
@@ -107,7 +112,12 @@ export default function Home() {
   const pnl = INITIAL_PNL;
   const [btcHoldings, setBtcHoldings] = useState(0);
   const [amountInput, setAmountInput] = useState('');
-  const { price: btcPrice, change: btcChange, changePct: btcChangePct, candles } = useBtcTicker();
+  const { price: livePrice, change: btcChange, changePct: btcChangePct, candles, status } = useBtcTicker();
+  const btcPrice = livePrice ?? 0;
+  // Require both a price and a currently-healthy connection: if polling
+  // starts failing after an initial success, stale data must not be
+  // tradeable against.
+  const priceReady = livePrice !== null && status === 'live';
   const btcUp = btcChange >= 0;
   const totalBalance = balance + btcHoldings * btcPrice;
 
@@ -115,6 +125,13 @@ export default function Home() {
   const isValidAmount = amountInput.trim() !== '' && Number.isFinite(parsedAmount) && parsedAmount > 0;
 
   const handleBuy = () => {
+    if (!priceReady) {
+      toast({
+        title: 'Waiting for live testnet price',
+        className: 'bg-[#0B1F3A] border border-red-500/40 text-white',
+      });
+      return;
+    }
     if (!isValidAmount) {
       toast({
         title: 'Enter a valid USDT amount',
@@ -142,6 +159,13 @@ export default function Home() {
   };
 
   const handleSell = () => {
+    if (!priceReady) {
+      toast({
+        title: 'Waiting for live testnet price',
+        className: 'bg-[#0B1F3A] border border-red-500/40 text-white',
+      });
+      return;
+    }
     if (!isValidAmount) {
       toast({
         title: 'Enter a valid USDT amount',
@@ -181,11 +205,27 @@ export default function Home() {
               <span className="text-[#0B1F3A] font-bold font-mono text-sm tracking-tighter">ATK</span>
             </div>
             <span className="font-semibold tracking-wide text-lg text-white">ATK Capital</span>
+            <span
+              className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/40 text-amber-300 text-[10px] sm:text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full"
+              data-testid="badge-testnet-mode"
+              title="Connected to Binance Testnet — market data is real, funds are simulated. No real money is used."
+            >
+              <FlaskConical className="w-3 h-3" />
+              Testnet Mode
+            </span>
           </div>
           <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-              SYS.ONLINE
+            <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400" data-testid="text-connection-status">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  status === 'live'
+                    ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                    : status === 'error'
+                    ? 'bg-red-500'
+                    : 'bg-amber-500 animate-pulse'
+                }`}
+              ></span>
+              {status === 'live' ? 'BINANCE TESTNET.LIVE' : status === 'error' ? 'TESTNET.OFFLINE' : 'CONNECTING...'}
             </div>
             <div className="w-9 h-9 rounded-full bg-[#FFD700]/10 border border-[#FFD700]/30 flex items-center justify-center overflow-hidden">
               <span className="text-[#FFD700] font-mono text-sm font-bold">JW</span>
@@ -199,19 +239,27 @@ export default function Home() {
             <span className="w-1.5 h-1.5 rounded-full bg-[#FFD700] animate-pulse"></span>
             BTC/USDT
           </span>
-          <span className="text-white font-semibold" data-testid="text-btc-price">
-            ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-          <span
-            className={`flex items-center gap-1 font-medium ${btcUp ? 'text-emerald-400' : 'text-red-400'}`}
-            data-testid="text-btc-change"
-          >
-            {btcUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-            {btcUp ? '+' : ''}
-            {btcChange.toFixed(2)} ({btcUp ? '+' : ''}
-            {btcChangePct.toFixed(2)}%)
-          </span>
-          <span className="hidden sm:inline text-slate-500 text-[10px] uppercase tracking-wider">24h</span>
+          {priceReady ? (
+            <>
+              <span className="text-white font-semibold" data-testid="text-btc-price">
+                ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span
+                className={`flex items-center gap-1 font-medium ${btcUp ? 'text-emerald-400' : 'text-red-400'}`}
+                data-testid="text-btc-change"
+              >
+                {btcUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                {btcUp ? '+' : ''}
+                {btcChange.toFixed(2)} ({btcUp ? '+' : ''}
+                {btcChangePct.toFixed(2)}%)
+              </span>
+              <span className="hidden sm:inline text-slate-500 text-[10px] uppercase tracking-wider">24h</span>
+            </>
+          ) : (
+            <span className="text-slate-500" data-testid="text-btc-price">
+              {status === 'error' ? 'Unable to reach Binance Testnet' : 'Connecting to Binance Testnet…'}
+            </span>
+          )}
         </div>
       </header>
 
@@ -283,30 +331,38 @@ export default function Home() {
               <BarChart3 className="w-5 h-5 text-[#FFD700]" />
               BTC/USDT Chart
             </h2>
-            <span
-              className={`flex items-center gap-1 text-sm font-mono font-medium ${btcUp ? 'text-emerald-400' : 'text-red-400'}`}
-              data-testid="text-chart-price"
-            >
-              {btcUp ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-              ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
+            {priceReady && (
+              <span
+                className={`flex items-center gap-1 text-sm font-mono font-medium ${btcUp ? 'text-emerald-400' : 'text-red-400'}`}
+                data-testid="text-chart-price"
+              >
+                {btcUp ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            )}
           </div>
 
           <div className="bg-slate-900/60 border border-white/5 rounded-2xl p-4 sm:p-6 shadow-xl">
             <div className="h-56 sm:h-64" data-testid="chart-btc-candlestick">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={candles} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
-                  <XAxis dataKey="time" hide />
-                  <YAxis
-                    domain={[
-                      (dataMin: number) => Math.floor(dataMin - 50),
-                      (dataMax: number) => Math.ceil(dataMax + 50),
-                    ]}
-                    hide
-                  />
-                  <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
+              {status === 'live' && candles.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={candles} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
+                    <XAxis dataKey="time" hide />
+                    <YAxis
+                      domain={[
+                        (dataMin: number) => Math.floor(dataMin - 50),
+                        (dataMax: number) => Math.ceil(dataMax + 50),
+                      ]}
+                      hide
+                    />
+                    <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-slate-500 font-mono">
+                  {status === 'error' ? 'Unable to load testnet chart data' : 'Loading testnet chart data…'}
+                </div>
+              )}
             </div>
           </div>
         </section>
@@ -328,8 +384,13 @@ export default function Home() {
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm font-mono text-slate-400">
                 <span>Market Price</span>
                 <span className="text-white font-semibold">
-                  ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {priceReady
+                    ? `${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : '—'}
                 </span>
+              </div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400/80 -mt-2">
+                Simulated funds only — orders execute against Binance Testnet price data, no real assets move.
               </div>
 
               <div>
@@ -358,14 +419,16 @@ export default function Home() {
               <div className="flex flex-col sm:flex-row items-stretch gap-3">
                 <button
                   onClick={handleSell}
-                  className="flex-1 px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/60"
+                  disabled={!priceReady}
+                  className="flex-1 px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   data-testid="button-sell"
                 >
                   SELL BTC
                 </button>
                 <button
                   onClick={handleBuy}
-                  className="flex-1 px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 bg-[#FFD700] text-[#0B1F3A] hover:bg-[#FFE55C] hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] shadow-[0_0_10px_rgba(255,215,0,0.2)]"
+                  disabled={!priceReady}
+                  className="flex-1 px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 bg-[#FFD700] text-[#0B1F3A] hover:bg-[#FFE55C] hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] shadow-[0_0_10px_rgba(255,215,0,0.2)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none"
                   data-testid="button-buy"
                 >
                   BUY BTC
