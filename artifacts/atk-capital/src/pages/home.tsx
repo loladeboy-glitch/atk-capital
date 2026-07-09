@@ -1,8 +1,36 @@
 import React, { useState } from 'react';
 import { TrendingUp, TrendingDown, ArrowRight, Activity, Clock, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
 
 export default function Home() {
   const [tradeStatus, setTradeStatus] = useState<'pending' | 'accepted' | 'declined'>('pending');
+
+  const handleTrade = () => {
+    setTradeStatus('accepted');
+    const t = toast({
+      title: 'Placing Order...',
+      description: 'Routing SpaceX Series G Secondary to execution desk.',
+      className: 'bg-[#0B1F3A] border border-[#FFD700]/30 text-white',
+    });
+    setTimeout(() => {
+      t.update({
+        id: t.id,
+        open: true,
+        title: 'Order Filled: +$50.00',
+        description: 'Trade executed and settled.',
+        className: 'bg-[#0B1F3A] border border-emerald-500/40 text-white',
+      });
+    }, 1200);
+  };
+
+  const handleDecline = () => {
+    setTradeStatus('declined');
+    toast({
+      title: 'Trade Declined',
+      description: 'The proposed order was rejected.',
+      className: 'bg-[#0B1F3A] border border-[#FFD700]/30 text-white',
+    });
+  };
 
   return (
     <div className="min-h-[100dvh] bg-[#0B1F3A] text-slate-50 font-sans flex flex-col selection:bg-[#FFD700]/30 selection:text-[#FFD700]">
@@ -97,14 +125,14 @@ export default function Home() {
                 {tradeStatus === 'pending' ? (
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
                     <button 
-                      onClick={() => setTradeStatus('declined')}
+                      onClick={handleDecline}
                       className="px-6 py-3 rounded-lg font-semibold text-sm transition-all duration-200 border border-slate-700 hover:border-slate-500 hover:bg-slate-800 text-slate-300 hover:text-white"
                       data-testid="button-decline"
                     >
                       Decline
                     </button>
                     <button 
-                      onClick={() => setTradeStatus('accepted')}
+                      onClick={handleTrade}
                       className="px-6 py-3 rounded-lg font-bold text-sm transition-all duration-200 bg-[#FFD700] text-[#0B1F3A] hover:bg-[#FFE55C] hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] shadow-[0_0_10px_rgba(255,215,0,0.2)] flex items-center justify-center gap-2"
                       data-testid="button-trade"
                     >
