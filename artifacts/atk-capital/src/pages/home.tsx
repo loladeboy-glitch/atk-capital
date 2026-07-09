@@ -2,17 +2,33 @@ import React, { useState } from 'react';
 import { TrendingUp, TrendingDown, ArrowRight, Activity, Clock, ShieldCheck, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
+const INITIAL_BALANCE = 10250.0;
+const INITIAL_PNL = 1130.5;
+const TRADE_GAIN = 50.0;
+
+function formatUsd(value: number) {
+  const [whole, cents] = Math.abs(value).toFixed(2).split('.');
+  const wholeFormatted = Number(whole).toLocaleString('en-US');
+  return { whole: wholeFormatted, cents };
+}
+
 export default function Home() {
-  const [tradeStatus, setTradeStatus] = useState<'pending' | 'accepted' | 'declined'>('pending');
+  const [tradeStatus, setTradeStatus] = useState<'pending' | 'settling' | 'accepted' | 'declined'>('pending');
+  const [balance, setBalance] = useState(INITIAL_BALANCE);
+  const [pnl, setPnl] = useState(INITIAL_PNL);
 
   const handleTrade = () => {
-    setTradeStatus('accepted');
+    if (tradeStatus !== 'pending') return;
+    setTradeStatus('settling');
     const t = toast({
       title: 'Placing Order...',
       description: 'Routing SpaceX Series G Secondary to execution desk.',
       className: 'bg-[#0B1F3A] border border-[#FFD700]/30 text-white',
     });
     setTimeout(() => {
+      setTradeStatus('accepted');
+      setBalance((prev) => prev + TRADE_GAIN);
+      setPnl((prev) => prev + TRADE_GAIN);
       t.update({
         id: t.id,
         open: true,
@@ -24,6 +40,7 @@ export default function Home() {
   };
 
   const handleDecline = () => {
+    if (tradeStatus !== 'pending') return;
     setTradeStatus('declined');
     toast({
       title: 'Trade Declined',
@@ -66,7 +83,7 @@ export default function Home() {
                 <span className="text-sm font-medium uppercase tracking-wider">Total Balance</span>
               </div>
               <div className="text-4xl sm:text-5xl font-mono font-light tracking-tight text-white" data-testid="text-total-balance">
-                $10,250<span className="text-slate-500">.00</span>
+                ${formatUsd(balance).whole}<span className="text-slate-500">.{formatUsd(balance).cents}</span>
               </div>
             </div>
           </div>
@@ -79,7 +96,7 @@ export default function Home() {
                 <span className="text-sm font-medium uppercase tracking-wider">Today's P&L</span>
               </div>
               <div className="text-4xl sm:text-5xl font-mono font-medium text-emerald-400 tracking-tight drop-shadow-[0_0_10px_rgba(52,211,153,0.2)]" data-testid="text-pnl">
-                +$1,130<span className="text-emerald-400/60">.50</span>
+                +${formatUsd(pnl).whole}<span className="text-emerald-400/60">.{formatUsd(pnl).cents}</span>
               </div>
             </div>
           </div>
@@ -138,6 +155,11 @@ export default function Home() {
                     >
                       Trade <ArrowRight className="w-4 h-4" />
                     </button>
+                  </div>
+                ) : tradeStatus === 'settling' ? (
+                  <div className="flex items-center justify-center sm:justify-start gap-2 text-[#FFD700] font-medium px-6 py-3 bg-[#FFD700]/10 rounded-lg border border-[#FFD700]/20 w-full sm:w-auto">
+                    <Clock className="w-5 h-5 animate-pulse" />
+                    Placing Order...
                   </div>
                 ) : tradeStatus === 'accepted' ? (
                   <div className="flex items-center justify-center sm:justify-start gap-2 text-emerald-400 font-medium px-6 py-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20 w-full sm:w-auto">
