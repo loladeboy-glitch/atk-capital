@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { TrendingUp, TrendingDown, Activity, ShieldCheck, Wallet, Bitcoin } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ResponsiveContainer, ComposedChart, Bar, XAxis, YAxis } from 'recharts';
+import { TrendingUp, TrendingDown, Activity, ShieldCheck, Wallet, Bitcoin, BarChart3 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 const INITIAL_BALANCE = 10250.0;
@@ -8,6 +9,16 @@ const INITIAL_PNL = 1130.5;
 const BTC_MIN = 67000;
 const BTC_MAX = 69000;
 const BTC_OPEN_24H = 67850;
+const MAX_CANDLES = 24;
+
+interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  range: [number, number];
+}
 
 function formatUsd(value: number) {
   const [whole, cents] = Math.abs(value).toFixed(2).split('.');
@@ -15,19 +26,47 @@ function formatUsd(value: number) {
   return { whole: wholeFormatted, cents };
 }
 
+function makeCandle(time: number, open: number, close: number): Candle {
+  const wiggle = Math.random() * 60;
+  const high = Math.max(open, close) + wiggle;
+  const low = Math.min(open, close) - wiggle;
+  const clampedHigh = Math.min(BTC_MAX + 150, high);
+  const clampedLow = Math.max(BTC_MIN - 150, low);
+  return {
+    time,
+    open,
+    close,
+    high: clampedHigh,
+    low: clampedLow,
+    range: [clampedLow, clampedHigh],
+  };
+}
+
 function useBtcTicker() {
   const [price, setPrice] = useState(
     () => BTC_MIN + Math.random() * (BTC_MAX - BTC_MIN),
   );
-  const priceRef = useRef(price);
-  priceRef.current = price;
-
+  const [candles, setCandles] = useState<Candle[]>(() => {
+    let last = price;
+    const seed: Candle[] = [];
+    for (let i = -MAX_CANDLES + 1; i <= 0; i++) {
+      const next = Math.min(BTC_MAX, Math.max(BTC_MIN, last + (Math.random() - 0.5) * 300));
+      seed.push(makeCandle(i, last, next));
+      last = next;
+    }
+    return seed;
+  });
   useEffect(() => {
     const id = setInterval(() => {
       setPrice((prev) => {
         const move = (Math.random() - 0.5) * 400;
-        const next = prev + move;
-        return Math.min(BTC_MAX, Math.max(BTC_MIN, next));
+        const next = Math.min(BTC_MAX, Math.max(BTC_MIN, prev + move));
+        setCandles((prevCandles) => {
+          const lastTime = prevCandles[prevCandles.length - 1]?.time ?? 0;
+          const updated = [...prevCandles, makeCandle(lastTime + 1, prev, next)];
+          return updated.length > MAX_CANDLES ? updated.slice(updated.length - MAX_CANDLES) : updated;
+        });
+        return next;
       });
     }, 3000);
     return () => clearInterval(id);
@@ -36,16 +75,41 @@ function useBtcTicker() {
   const change = price - BTC_OPEN_24H;
   const changePct = (change / BTC_OPEN_24H) * 100;
 
-  return { price, change, changePct };
+  return { price, change, changePct, candles };
+}
+
+function CandleShape(props: any) {
+  // x/y/height come from Recharts scaling the "range" dataKey ([low, high]),
+  // so y = pixel for `high` and y+height = pixel for `low`. Derive open/close
+  // pixel positions by interpolating within that known, always-valid range.
+  const { x, y, width, height, payload } = props;
+  const { open, close, high, low } = payload as Candle;
+  const valueRange = high - low || 0.01;
+  const scale = height / valueRange;
+  const openY = y + (high - open) * scale;
+  const closeY = y + (high - close) * scale;
+  const bodyTop = Math.min(openY, closeY);
+  const bodyHeight = Math.max(Math.abs(closeY - openY), 1.5);
+  const isUp = close >= open;
+  const color = isUp ? '#34d399' : '#f87171';
+  const cx = x + width / 2;
+
+  return (
+    <g>
+      <line x1={cx} x2={cx} y1={y} y2={y + height} stroke={color} strokeWidth={1} />
+      <rect x={x} y={bodyTop} width={width} height={bodyHeight} fill={color} rx={1} />
+    </g>
+  );
 }
 
 export default function Home() {
   const [balance, setBalance] = useState(INITIAL_BALANCE);
-  const [pnl, setPnl] = useState(INITIAL_PNL);
+  const pnl = INITIAL_PNL;
   const [btcHoldings, setBtcHoldings] = useState(0);
   const [amountInput, setAmountInput] = useState('');
-  const { price: btcPrice, change: btcChange, changePct: btcChangePct } = useBtcTicker();
+  const { price: btcPrice, change: btcChange, changePct: btcChangePct, candles } = useBtcTicker();
   const btcUp = btcChange >= 0;
+  const totalBalance = balance + btcHoldings * btcPrice;
 
   const parsedAmount = Number(amountInput);
   const isValidAmount = amountInput.trim() !== '' && Number.isFinite(parsedAmount) && parsedAmount > 0;
@@ -164,7 +228,10 @@ export default function Home() {
                 <span className="text-sm font-medium uppercase tracking-wider">Total Balance</span>
               </div>
               <div className="text-4xl sm:text-5xl font-mono font-light tracking-tight text-white" data-testid="text-total-balance">
-                ${formatUsd(balance).whole}<span className="text-slate-500">.{formatUsd(balance).cents}</span>
+                ${formatUsd(totalBalance).whole}<span className="text-slate-500">.{formatUsd(totalBalance).cents}</span>
+              </div>
+              <div className="text-xs font-mono text-slate-500 mt-2">
+                USDT + BTC × price
               </div>
             </div>
           </div>
@@ -208,6 +275,41 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {/* Candlestick Chart */}
+        <section className="mt-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold tracking-wide flex items-center gap-2 text-white">
+              <BarChart3 className="w-5 h-5 text-[#FFD700]" />
+              BTC/USDT Chart
+            </h2>
+            <span
+              className={`flex items-center gap-1 text-sm font-mono font-medium ${btcUp ? 'text-emerald-400' : 'text-red-400'}`}
+              data-testid="text-chart-price"
+            >
+              {btcUp ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+              ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          <div className="bg-slate-900/60 border border-white/5 rounded-2xl p-4 sm:p-6 shadow-xl">
+            <div className="h-56 sm:h-64" data-testid="chart-btc-candlestick">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={candles} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
+                  <XAxis dataKey="time" hide />
+                  <YAxis
+                    domain={[
+                      (dataMin: number) => Math.floor(dataMin - 50),
+                      (dataMax: number) => Math.ceil(dataMax + 50),
+                    ]}
+                    hide
+                  />
+                  <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </section>
 
         {/* Buy / Sell BTC */}
         <section className="mt-4">
