@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 class PortfolioScreen extends StatefulWidget {
+  const PortfolioScreen({super.key});
+
   @override
   State<PortfolioScreen> createState() => _PortfolioScreenState();
 }
@@ -10,6 +12,7 @@ class PortfolioScreen extends StatefulWidget {
 class _PortfolioScreenState extends State<PortfolioScreen> {
   Map? balanceData;
   bool isLoading = true;
+  String error = '';
 
   @override
   void initState() {
@@ -19,11 +22,16 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
 
   Future<void> fetchBalance() async {
     final response = await http.get(
-      Uri.parse('https://atk-capital-production.up.railway.app/api/binance/balance'),
+      Uri.parse('https://atk-capital-production.up.railway.app/api/portfolio'),
     );
     if (response.statusCode == 200) {
       setState(() {
         balanceData = json.decode(response.body);
+        isLoading = false;
+      });
+    } else {
+      setState(() {
+        error = 'Error ${response.statusCode}';
         isLoading = false;
       });
     }
@@ -32,20 +40,30 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Portfolio'), backgroundColor: Colors.black),
-      body: Center(
-        child: isLoading
-            ? CircularProgressIndicator(color: Colors.green)
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('Total Balance', style: TextStyle(fontSize: 20, color: Colors.grey)),
-                  Text('\$${balanceData!['total']}', style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.green)),
-                  SizedBox(height: 20),
-                  Text('BTC: ${balanceData!['btc']}', style: TextStyle(fontSize: 24)),
-                ],
-              ),
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('ATK Capital Portfolio'),
+        backgroundColor: Colors.black,
       ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.green))
+          : error.isNotEmpty
+              ? Center(child: Text(error, style: const TextStyle(color: Colors.red)))
+              : Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Total Balance', style: TextStyle(color: Colors.grey)),
+                      Text(
+                        '\$${balanceData!['balance']?.toString() ?? '0.00'}',
+                        style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.green),
+                      ),
+                      const SizedBox(height: 30),
+                      const Text('Assets', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
     );
   }
 }
